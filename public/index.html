@@ -11,7 +11,7 @@
   <p id="result"></p>
   <textarea id="keyOutput" rows="4" cols="50" placeholder="上传后密钥会显示在这里"></textarea>
   <script>
-    const CHUNK_SIZE = 4999972; // 4.76MB，加密后正好 5MB
+    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB 分片大小
     const MAX_RETRIES = 3;
     const API_TOKEN = "my-secret-token-123";
     let isUploading = false;
@@ -41,14 +41,10 @@
         const response = await fetch("/.netlify/functions/upload-file", {
           method: "POST",
           headers: {
-            "Content-Type": "application/octet-stream",
+            "Content-Type": "application/json",
             "Authorization": `Bearer ${API_TOKEN}`,
-            "X-File-Name": encodeURIComponent(requestBody.fileName),
-            "X-Part-Number": requestBody.partNumber || "0",
-            "X-Total-Parts": requestBody.totalParts,
-            "X-File-Id": requestBody.fileId || "",
           },
-          body: requestBody.file,
+          body: JSON.stringify(requestBody),
         });
         if (!response.ok) throw new Error(await response.text());
         return await response.json();
@@ -90,9 +86,15 @@
       if (totalChunks === 1) {
         const { encryptedBlob, keyBase64 } = await encryptChunk(file);
         fileKey = keyBase64;
+        const reader = new FileReader();
+        reader.readAsDataURL(encryptedBlob);
+        await new Promise((resolve) => (reader.onload = resolve));
+
+        const base64Data = reader.result.split(",")[1];
         const requestBody = {
-          file: encryptedBlob,
+          file: base64Data,
           fileName: file.name + ".enc",
+          mimeType: "application/octet-stream",
           totalParts: 1,
         };
 
@@ -120,9 +122,15 @@
 
         const { encryptedBlob, keyBase64 } = await encryptChunk(chunk);
         if (i === 0) fileKey = keyBase64;
+        const reader = new FileReader();
+        reader.readAsDataURL(encryptedBlob);
+        await new Promise((resolve) => (reader.onload = resolve));
+
+        const base64Data = reader.result.split(",")[1];
         const requestBody = {
-          file: encryptedBlob,
+          file: base64Data,
           fileName: fileName,
+          mimeType: "application/octet-stream",
           partNumber: i + 1,
           totalParts: totalChunks,
           fileId: fileId || undefined,
