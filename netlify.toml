@@ -1,3 +1,6 @@
-[build]
-  publish = "public"
-  functions = "functions"
+[functions]
+  external_node_modules = ["node-fetch", "crypto"]
+  node_bundler = "esbuild"
+  [functions.upload-file]
+    timeout = 15
+    memory = 256
