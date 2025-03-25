@@ -1,0 +1,8 @@
+{
+  "name": "my-netlify-project",
+  "version": "1.0.0",
+  "dependencies": {
+    "node-fetch": "^2.6.12",
+    "formidable": "^3.5.1"
+  }
+}
