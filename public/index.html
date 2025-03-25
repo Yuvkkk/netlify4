@@ -7,13 +7,14 @@
 <body>
   <h1>上传文件到 Backblaze B2（加密）</h1>
   <input type="file" id="fileInput" />
-  <button onclick="upload()">上传</button>
+  <button id="uploadButton" onclick="upload()">上传</button>
   <p id="result"></p>
   <textarea id="keyOutput" rows="4" cols="50" placeholder="上传后密钥会显示在这里"></textarea>
   <script>
     const CHUNK_SIZE = 4 * 1024 * 1024;
     const MAX_RETRIES = 3;
     const API_TOKEN = "my-secret-token-123";
+    let isUploading = false; // 上传锁
 
     async function encryptChunk(chunk) {
       const key = await crypto.subtle.generateKey(
@@ -57,10 +58,20 @@
     }
 
     async function upload() {
+      if (isUploading) {
+        document.getElementById("result").textContent = "正在上传，请勿重复点击！";
+        return;
+      }
+      isUploading = true;
+      const uploadButton = document.getElementById("uploadButton");
+      uploadButton.disabled = true;
+
       const fileInput = document.getElementById("fileInput");
       const file = fileInput.files[0];
       if (!file) {
         document.getElementById("result").textContent = "请选择文件";
+        isUploading = false;
+        uploadButton.disabled = false;
         return;
       }
 
@@ -96,11 +107,13 @@
           document.getElementById("result").textContent = `上传失败: ${error.message}`;
           console.error("小文件上传错误:", error.message);
         }
+        isUploading = false;
+        uploadButton.disabled = false;
         return;
       }
 
       let fileId = null;
-      const fileName = file.name + ".enc"; // 提前定义文件名，确保一致
+      const fileName = file.name + ".enc";
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, file.size);
@@ -119,23 +132,27 @@
           mimeType: "application/octet-stream",
           partNumber: i + 1,
           totalParts: totalChunks,
-          fileId: fileId || undefined, // 确保首次不传 fileId
+          fileId: fileId || undefined,
         };
 
         try {
           console.log(`发送分片 ${i + 1}/${totalChunks}...`);
           const data = await uploadChunk(requestBody);
-          if (i === 0) fileId = data.fileId; // 只在第一个分片设置 fileId
+          if (i === 0) fileId = data.fileId;
           document.getElementById("result").textContent = `分片 ${i + 1}/${totalChunks} 上传成功`;
           console.log(`分片 ${i + 1} 成功:`, data);
         } catch (error) {
           document.getElementById("result").textContent = `分片 ${i + 1} 上传失败: ${error.message}`;
           console.error(`分片 ${i + 1} 错误:`, error.message);
-          return; // 失败时退出循环
+          isUploading = false;
+          uploadButton.disabled = false;
+          return;
         }
       }
       document.getElementById("result").textContent = `文件上传完成: ${fileName}`;
       document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
+      isUploading = false;
+      uploadButton.disabled = false;
     }
   </script>
 </body>
