@@ -2,27 +2,16 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8">
-  <title>文件分片上传与解密</title>
+  <title>文件分片上传（客户端加密）</title>
 </head>
 <body>
   <h1>上传文件到 Backblaze B2（加密）</h1>
   <input type="file" id="fileInput" />
   <button id="uploadButton" onclick="upload()">上传</button>
-  <p id="uploadResult"></p>
+  <p id="result"></p>
   <textarea id="keyOutput" rows="4" cols="50" placeholder="上传后密钥会显示在这里"></textarea>
-
-  <hr>
-  <h1>从 Backblaze B2 下载并解密文件</h1>
-  <label for="fileUrl">文件 URL:</label>
-  <input type="text" id="fileUrl" size="50" placeholder="请输入 B2 文件 URL" /><br><br>
-  <label for="keyInput">密钥 (Base64):</label>
-  <textarea id="keyInput" rows="4" cols="50" placeholder="请输入上传时保存的密钥"></textarea><br><br>
-  <button id="downloadButton" onclick="downloadAndDecrypt()">下载并解密</button>
-  <p id="decryptResult"></p>
-
   <script>
-    // 上传相关常量和函数
-    const UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024; // 4MB 分片大小
+    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB 分片大小
     const MAX_RETRIES = 3;
     const API_TOKEN = "my-secret-token-123";
     let isUploading = false;
@@ -71,7 +60,7 @@
 
     async function upload() {
       if (isUploading) {
-        document.getElementById("uploadResult").textContent = "正在上传，请勿重复点击！";
+        document.getElementById("result").textContent = "正在上传，请勿重复点击！";
         return;
       }
       isUploading = true;
@@ -81,16 +70,16 @@
       const fileInput = document.getElementById("fileInput");
       const file = fileInput.files[0];
       if (!file) {
-        document.getElementById("uploadResult").textContent = "请选择文件";
+        document.getElementById("result").textContent = "请选择文件";
         isUploading = false;
         uploadButton.disabled = false;
         return;
       }
 
       console.log(`文件大小: ${file.size} 字节`);
-      const totalChunks = Math.ceil(file.size / UPLOAD_CHUNK_SIZE);
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
       console.log(`总分片数: ${totalChunks}`);
-      document.getElementById("uploadResult").textContent = "开始上传...";
+      document.getElementById("result").textContent = "开始上传...";
 
       let fileKey = null;
 
@@ -112,11 +101,11 @@
         try {
           console.log("发送小文件请求...");
           const data = await uploadChunk(requestBody);
-          document.getElementById("uploadResult").textContent = `文件上传成功: ${data.fileUrl}`;
+          document.getElementById("result").textContent = `文件上传成功: ${data.fileUrl}`;
           document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
           console.log("小文件上传成功:", data);
         } catch (error) {
-          document.getElementById("uploadResult").textContent = `上传失败: ${error.message}`;
+          document.getElementById("result").textContent = `上传失败: ${error.message}`;
           console.error("小文件上传错误:", error.message);
         }
         isUploading = false;
@@ -127,8 +116,8 @@
       let fileId = null;
       const fileName = file.name + ".enc";
       for (let i = 0; i < totalChunks; i++) {
-        const start = i * UPLOAD_CHUNK_SIZE;
-        const end = Math.min(start + UPLOAD_CHUNK_SIZE, file.size);
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
         const { encryptedBlob, keyBase64 } = await encryptChunk(chunk);
@@ -151,123 +140,20 @@
           console.log(`发送分片 ${i + 1}/${totalChunks}...`);
           const data = await uploadChunk(requestBody);
           if (i === 0) fileId = data.fileId;
-          document.getElementById("uploadResult").textContent = `分片 ${i + 1}/${totalChunks} 上传成功`;
+          document.getElementById("result").textContent = `分片 ${i + 1}/${totalChunks} 上传成功`;
           console.log(`分片 ${i + 1} 成功:`, data);
         } catch (error) {
-          document.getElementById("uploadResult").textContent = `分片 ${i + 1} 上传失败: ${error.message}`;
+          document.getElementById("result").textContent = `分片 ${i + 1} 上传失败: ${error.message}`;
           console.error(`分片 ${i + 1} 错误:`, error.message);
           isUploading = false;
           uploadButton.disabled = false;
           return;
         }
       }
-      document.getElementById("uploadResult").textContent = `文件上传完成: ${fileName}`;
+      document.getElementById("result").textContent = `文件上传完成: ${fileName}`;
       document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
       isUploading = false;
       uploadButton.disabled = false;
-    }
-
-    // 解密相关常量和函数
-    const DECRYPT_CHUNK_SIZE = 8 * 1024 * 1024; // 8MB，与上传时的合并大小一致
-
-    async function decryptChunk(chunk, keyBase64) {
-      const keyBuffer = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
-      const key = await crypto.subtle.importKey(
-        "raw",
-        keyBuffer,
-        { name: "AES-GCM" },
-        false,
-        ["decrypt"]
-      );
-
-      const buffer = await chunk.arrayBuffer();
-      const iv = buffer.slice(0, 12); // 前 12 字节是 IV
-      const encryptedData = buffer.slice(12); // 剩余部分是加密数据 + 标签
-
-      const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        key,
-        encryptedData
-      );
-      return new Blob([decrypted]);
-    }
-
-    async function downloadAndDecrypt() {
-      const downloadButton = document.getElementById("downloadButton");
-      downloadButton.disabled = true;
-      const resultElement = document.getElementById("decryptResult");
-      resultElement.textContent = "开始下载...";
-
-      const fileUrl = document.getElementById("fileUrl").value.trim();
-      const keyBase64 = document.getElementById("keyInput").value.trim();
-
-      if (!fileUrl || !keyBase64) {
-        resultElement.textContent = "请输入文件 URL 和密钥";
-        downloadButton.disabled = false;
-        return;
-      }
-
-      try {
-        const headResponse = await fetch(fileUrl, { method: "HEAD" });
-        if (!headResponse.ok) throw new Error("无法获取文件信息");
-        const fileSize = parseInt(headResponse.headers.get("Content-Length"), 10);
-        console.log(`文件大小: ${fileSize} 字节`);
-
-        const totalChunks = Math.ceil(fileSize / DECRYPT_CHUNK_SIZE);
-        console.log(`总分片数: ${totalChunks}`);
-        const decryptedChunks = [];
-
-        for (let i = 0; i < totalChunks; i++) {
-          const start = i * DECRYPT_CHUNK_SIZE;
-          const end = Math.min(start + DECRYPT_CHUNK_SIZE - 1, fileSize - 1);
-          console.log(`下载分片 ${i + 1}/${totalChunks}, 范围: ${start}-${end}`);
-
-          const response = await fetch(fileUrl, {
-            headers: { Range: `bytes=${start}-${end}` },
-          });
-          if (!response.ok) throw new Error(`下载分片 ${i + 1} 失败`);
-
-          const chunk = await response.blob();
-          console.log(`分片 ${i + 1} 下载完成，大小: ${chunk.size} 字节`);
-
-          const chunkBuffer = await chunk.arrayBuffer();
-          const chunkSize = chunkBuffer.byteLength;
-          const blockSize = 4 * 1024 * 1024 + 28; // 4MB + 28 字节
-          const numBlocks = Math.ceil(chunkSize / blockSize);
-
-          for (let j = 0; j < numBlocks; j++) {
-            const blockStart = j * blockSize;
-            const blockEnd = Math.min(blockStart + blockSize, chunkSize);
-            const block = chunkBuffer.slice(blockStart, blockEnd);
-
-            if (block.byteLength < 28) continue;
-
-            const blockBlob = new Blob([block]);
-            const decryptedBlock = await decryptChunk(blockBlob, keyBase64);
-            console.log(`分片 ${i + 1} 块 ${j + 1} 解密完成，大小: ${decryptedBlock.size} 字节`);
-            decryptedChunks.push(decryptedBlock);
-          }
-        }
-
-        const decryptedFile = new Blob(decryptedChunks);
-        console.log(`解密完成，总大小: ${decryptedFile.size} 字节`);
-
-        const downloadUrl = URL.createObjectURL(decryptedFile);
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = fileUrl.split("/").pop().replace(".enc", "");
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(downloadUrl);
-
-        resultElement.textContent = "文件下载并解密成功！";
-      } catch (error) {
-        console.error("解密失败:", error.message);
-        resultElement.textContent = `解密失败: ${error.message}`;
-      }
-
-      downloadButton.disabled = false;
     }
   </script>
 </body>
