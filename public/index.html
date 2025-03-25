@@ -11,53 +11,50 @@
   <p id="result"></p>
   <textarea id="keyOutput" rows="4" cols="50" placeholder="上传后密钥会显示在这里"></textarea>
   <script>
-    const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB 分片大小
+    const CHUNK_SIZE = 4 * 1024 * 1024;
     const MAX_RETRIES = 3;
-    const API_TOKEN = "my-secret-token-123"; // 与后端匹配
+    const API_TOKEN = "my-secret-token-123";
 
-    // 加密文件分片
     async function encryptChunk(chunk) {
       const key = await crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 },
-        true, // 可导出
+        true,
         ["encrypt", "decrypt"]
       );
-      const iv = crypto.getRandomValues(new Uint8Array(12)); // 12 字节 IV
+      const iv = crypto.getRandomValues(new Uint8Array(12));
       const buffer = await chunk.arrayBuffer();
       const encrypted = await crypto.subtle.encrypt(
         { name: "AES-GCM", iv },
         key,
         buffer
       );
-      // 导出密钥为 Base64
       const exportedKey = await crypto.subtle.exportKey("raw", key);
       const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
-      // 将 IV 和加密数据合并
       const encryptedBlob = new Blob([iv, encrypted]);
       return { encryptedBlob, keyBase64 };
     }
 
-   async function uploadChunk(requestBody, retryCount = 0) {
-  try {
-    const response = await fetch("/.netlify/functions/upload-file", { // 修改这里
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${API_TOKEN}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
-    if (!response.ok) throw new Error(await response.text());
-    return await response.json();
-  } catch (error) {
-    if (retryCount < MAX_RETRIES) {
-      console.log(`重试 ${retryCount + 1}/${MAX_RETRIES}...`);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      return uploadChunk(requestBody, retryCount + 1);
+    async function uploadChunk(requestBody, retryCount = 0) {
+      try {
+        const response = await fetch("/.netlify/functions/upload-file", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${API_TOKEN}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+        if (!response.ok) throw new Error(await response.text());
+        return await response.json();
+      } catch (error) {
+        if (retryCount < MAX_RETRIES) {
+          console.log(`重试 ${retryCount + 1}/${MAX_RETRIES}...`);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          return uploadChunk(requestBody, retryCount + 1);
+        }
+        throw error;
+      }
     }
-    throw error;
-  }
-}
 
     async function upload() {
       const fileInput = document.getElementById("fileInput");
@@ -72,7 +69,7 @@
       console.log(`总分片数: ${totalChunks}`);
       document.getElementById("result").textContent = "开始上传...";
 
-      let fileKey = null; // 保存密钥
+      let fileKey = null;
 
       if (totalChunks === 1) {
         const { encryptedBlob, keyBase64 } = await encryptChunk(file);
@@ -84,7 +81,7 @@
         const base64Data = reader.result.split(",")[1];
         const requestBody = {
           file: base64Data,
-          fileName: file.name + ".enc", // 添加 .enc 后缀表示加密文件
+          fileName: file.name + ".enc",
           mimeType: "application/octet-stream",
           totalParts: 1,
         };
@@ -98,19 +95,19 @@
         } catch (error) {
           document.getElementById("result").textContent = `上传失败: ${error.message}`;
           console.error("小文件上传错误:", error.message);
-          return;
         }
         return;
       }
 
       let fileId = null;
+      const fileName = file.name + ".enc"; // 提前定义文件名，确保一致
       for (let i = 0; i < totalChunks; i++) {
         const start = i * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
         const { encryptedBlob, keyBase64 } = await encryptChunk(chunk);
-        if (i === 0) fileKey = keyBase64; // 只保存第一个分片的密钥（可优化为每个分片不同密钥）
+        if (i === 0) fileKey = keyBase64;
         const reader = new FileReader();
         reader.readAsDataURL(encryptedBlob);
         await new Promise((resolve) => (reader.onload = resolve));
@@ -118,26 +115,26 @@
         const base64Data = reader.result.split(",")[1];
         const requestBody = {
           file: base64Data,
-          fileName: file.name + ".enc",
+          fileName: fileName,
           mimeType: "application/octet-stream",
           partNumber: i + 1,
           totalParts: totalChunks,
-          fileId: fileId,
+          fileId: fileId || undefined, // 确保首次不传 fileId
         };
 
         try {
           console.log(`发送分片 ${i + 1}/${totalChunks}...`);
           const data = await uploadChunk(requestBody);
-          if (i === 0) fileId = data.fileId;
+          if (i === 0) fileId = data.fileId; // 只在第一个分片设置 fileId
           document.getElementById("result").textContent = `分片 ${i + 1}/${totalChunks} 上传成功`;
           console.log(`分片 ${i + 1} 成功:`, data);
         } catch (error) {
           document.getElementById("result").textContent = `分片 ${i + 1} 上传失败: ${error.message}`;
           console.error(`分片 ${i + 1} 错误:`, error.message);
-          return;
+          return; // 失败时退出循环
         }
       }
-      document.getElementById("result").textContent = `文件上传完成: ${file.name}.enc`;
+      document.getElementById("result").textContent = `文件上传完成: ${fileName}`;
       document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
     }
   </script>
