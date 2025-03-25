@@ -1,3 +1,7 @@
+[build]
+  publish = "public"  # 静态文件目录
+  functions = "functions"  # Functions 目录
+
 [functions]
   external_node_modules = ["node-fetch", "crypto"]
   node_bundler = "esbuild"
