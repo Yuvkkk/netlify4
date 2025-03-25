@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>文件上传</title>
+</head>
+<body>
+  <h1>上传文件到 Backblaze B2</h1>
+  <input type="file" id="fileInput" />
+  <button onclick="upload()">上传</button>
+  <p id="result"></p>
+  <script>
+    async function upload() {
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append("file", file); // 直接添加文件
+
+      try {
+        const response = await fetch("/.netlify/functions/upload-file", {
+          method: "POST",
+          body: formData, // 发送 FormData，不设 Content-Type（浏览器自动处理）
+        });
+        const data = await response.json();
+        document.getElementById("result").textContent = data.message;
+      } catch (error) {
+        document.getElementById("result").textContent = "上传失败: " + error.message;
+      }
+    }
+  </script>
+</body>
+</html>
