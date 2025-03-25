@@ -7,8 +7,6 @@ const authUrl = "https://api.backblazeb2.com/b2api/v2/b2_authorize_account";
 const PART_SIZE = 5 * 1024 * 1024;
 const CHUNK_SIZE = 4 * 1024 * 1024;
 
-const uploadSessions = new Map();
-
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
@@ -76,8 +74,10 @@ exports.handler = async (event, context) => {
       };
     }
 
-    let session = uploadSessions.get(fileName);
-    let fileId = incomingFileId || session?.fileId;
+    let fileId = incomingFileId;
+    let tempBuffer = [];
+    let tempSize = 0;
+    let parts = [];
 
     if (partNumber === 1 && !fileId) {
       const startLargeFileResponse = await fetch(`${apiUrl}/b2api/v2/b2_start_large_file`, {
@@ -92,21 +92,19 @@ exports.handler = async (event, context) => {
       const startLargeFileData = await startLargeFileResponse.json();
       if (!startLargeFileResponse.ok) throw new Error(`启动大文件失败: ${JSON.stringify(startLargeFileData)}`);
       fileId = startLargeFileData.fileId;
-      session = { fileId, parts: [], tempBuffer: [], tempSize: 0 };
-      uploadSessions.set(fileName, session);
       console.log("启动大文件上传成功:", fileId);
     }
 
-    if (!fileId || !session) {
-      throw new Error("无效的 fileId 或会话");
+    if (!fileId) {
+      throw new Error("无效的 fileId");
     }
 
-    session.tempBuffer.push(fileBuffer);
-    session.tempSize += fileBuffer.length;
-    console.log(`暂存分片 ${partNumber}, 当前累计大小: ${session.tempSize} 字节`);
+    tempBuffer.push(fileBuffer);
+    tempSize += fileBuffer.length;
+    console.log(`暂存分片 ${partNumber}, 当前累计大小: ${tempSize} 字节`);
 
-    if (session.tempSize >= PART_SIZE || partNumber === totalParts) {
-      const combinedBuffer = Buffer.concat(session.tempBuffer);
+    if (tempSize >= PART_SIZE || partNumber === totalParts) {
+      const combinedBuffer = Buffer.concat(tempBuffer);
       console.log(`合并分片，准备上传到 B2，大小: ${combinedBuffer.length} 字节`);
 
       const uploadPartUrlResponse = await fetch(`${apiUrl}/b2api/v2/b2_get_upload_part_url`, {
@@ -119,7 +117,7 @@ exports.handler = async (event, context) => {
       const { uploadUrl, authorizationToken: partAuthToken } = uploadPartUrlData;
 
       const sha1 = crypto.createHash("sha1").update(combinedBuffer).digest("hex");
-      const actualPartNumber = session.parts.length + 1;
+      const actualPartNumber = partNumber <= 2 ? 1 : partNumber - 1; // 调整分片编号
       const uploadPartResponse = await fetch(uploadUrl, {
         method: "POST",
         headers: {
@@ -132,12 +130,11 @@ exports.handler = async (event, context) => {
         body: combinedBuffer,
       });
       if (!uploadPartResponse.ok) throw new Error(`分片上传失败: ${await uploadPartResponse.text()}`);
-      session.parts.push({ partNumber: actualPartNumber, sha1 });
+      parts.push({ partNumber: actualPartNumber, sha1 });
       console.log(`分片 ${actualPartNumber} 上传成功`);
 
-      session.tempBuffer = [];
-      session.tempSize = 0;
-      uploadSessions.set(fileName, session);
+      tempBuffer = [];
+      tempSize = 0;
     }
 
     if (partNumber === totalParts) {
@@ -146,12 +143,11 @@ exports.handler = async (event, context) => {
         headers: { Authorization: authorizationToken, "Content-Type": "application/json" },
         body: JSON.stringify({
           fileId,
-          partSha1Array: session.parts.sort((a, b) => a.partNumber - b.partNumber).map((p) => p.sha1),
+          partSha1Array: parts.sort((a, b) => a.partNumber - b.partNumber).map((p) => p.sha1),
         }),
       });
       const finishData = await finishLargeFileResponse.json();
       if (!finishLargeFileResponse.ok) throw new Error(`完成大文件失败: ${JSON.stringify(finishData)}`);
-      uploadSessions.delete(fileName);
       console.log("大文件上传完成:", fileName);
 
       return {
