@@ -11,10 +11,10 @@
   <p id="result"></p>
   <textarea id="keyOutput" rows="4" cols="50" placeholder="上传后密钥会显示在这里"></textarea>
   <script>
-    const CHUNK_SIZE = 4 * 1024 * 1024;
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB 分片大小
     const MAX_RETRIES = 3;
     const API_TOKEN = "my-secret-token-123";
-    let isUploading = false; // 上传锁
+    let isUploading = false;
 
     async function encryptChunk(chunk) {
       const key = await crypto.subtle.generateKey(
