@@ -37,27 +37,27 @@
       return { encryptedBlob, keyBase64 };
     }
 
-    async function uploadChunk(requestBody, retryCount = 0) {
-      try {
-        const response = await fetch("/.netlify/functions/upload-file", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${API_TOKEN}`,
-          },
-          body: JSON.stringify(requestBody),
-        });
-        if (!response.ok) throw new Error(await response.text());
-        return await response.json();
-      } catch (error) {
-        if (retryCount < MAX_RETRIES) {
-          console.log(`重试 ${retryCount + 1}/${MAX_RETRIES}...`);
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          return uploadChunk(requestBody, retryCount + 1);
-        }
-        throw error;
-      }
+   async function uploadChunk(requestBody, retryCount = 0) {
+  try {
+    const response = await fetch("/.netlify/functions/upload-file", { // 修改这里
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${API_TOKEN}`,
+      },
+      body: JSON.stringify(requestBody),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    return await response.json();
+  } catch (error) {
+    if (retryCount < MAX_RETRIES) {
+      console.log(`重试 ${retryCount + 1}/${MAX_RETRIES}...`);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return uploadChunk(requestBody, retryCount + 1);
     }
+    throw error;
+  }
+}
 
     async function upload() {
       const fileInput = document.getElementById("fileInput");
