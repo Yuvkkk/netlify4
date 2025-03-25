@@ -76,8 +76,8 @@ exports.handler = async (event, context) => {
       };
     }
 
-    let fileId = incomingFileId;
-    let session = uploadSessions.get(fileName) || { fileId: null, parts: [], tempBuffer: [], tempSize: 0 };
+    let session = uploadSessions.get(fileName);
+    let fileId = incomingFileId || session?.fileId;
 
     if (partNumber === 1 && !fileId) {
       const startLargeFileResponse = await fetch(`${apiUrl}/b2api/v2/b2_start_large_file`, {
@@ -92,12 +92,12 @@ exports.handler = async (event, context) => {
       const startLargeFileData = await startLargeFileResponse.json();
       if (!startLargeFileResponse.ok) throw new Error(`启动大文件失败: ${JSON.stringify(startLargeFileData)}`);
       fileId = startLargeFileData.fileId;
-      session.fileId = fileId;
+      session = { fileId, parts: [], tempBuffer: [], tempSize: 0 };
       uploadSessions.set(fileName, session);
       console.log("启动大文件上传成功:", fileId);
     }
 
-    if (!fileId || !session.fileId) {
+    if (!fileId || !session) {
       throw new Error("无效的 fileId 或会话");
     }
 
@@ -149,7 +149,8 @@ exports.handler = async (event, context) => {
           partSha1Array: session.parts.sort((a, b) => a.partNumber - b.partNumber).map((p) => p.sha1),
         }),
       });
-      if (!finishLargeFileResponse.ok) throw new Error(`完成大文件失败: ${await finishLargeFileResponse.text()}`);
+      const finishData = await finishLargeFileResponse.json();
+      if (!finishLargeFileResponse.ok) throw new Error(`完成大文件失败: ${JSON.stringify(finishData)}`);
       uploadSessions.delete(fileName);
       console.log("大文件上传完成:", fileName);
 
