@@ -4,8 +4,7 @@ const crypto = require("crypto");
 const accountId = process.env.B2_ACCOUNT_ID;
 const applicationKey = process.env.B2_APPLICATION_KEY;
 const authUrl = "https://api.backblazeb2.com/b2api/v2/b2_authorize_account";
-const PART_SIZE = 5 * 1024 * 1024;
-const CHUNK_SIZE = 4 * 1024 * 1024;
+const MIN_PART_SIZE = 5 * 1000 * 1000; // 5MB
 
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
@@ -19,18 +18,23 @@ exports.handler = async (event, context) => {
     return { statusCode: 405, body: JSON.stringify({ message: "Method Not Allowed" }) };
   }
 
-  console.log("收到请求: [长度]", event.body.length);
+  console.log("收到请求: [大小]", event.body.length);
   try {
-    if (!event.body) throw new Error("请求体为空");
-    const body = JSON.parse(event.body);
-    const { file, fileName, mimeType, partNumber, totalParts, fileId: incomingFileId } = body;
+    const fileBuffer = Buffer.from(event.body, "binary");
+    const fileName = decodeURIComponent(event.headers["x-file-name"]);
+    const partNumber = parseInt(event.headers["x-part-number"], 10) || 0;
+    const totalParts = parseInt(event.headers["x-total-parts"], 10);
+    const incomingFileId = event.headers["x-file-id"] || undefined;
 
-    if (!file || !fileName || !totalParts) {
+    if (!fileBuffer.length || !fileName || !totalParts) {
       throw new Error("缺少必要参数");
     }
 
-    const fileBuffer = Buffer.from(file, "base64");
     console.log(`文件: ${fileName}, 大小: ${fileBuffer.length} 字节, totalParts: ${totalParts}, partNumber: ${partNumber || "N/A"}`);
+
+    if (partNumber && partNumber < totalParts && fileBuffer.length < MIN_PART_SIZE) {
+      throw new Error(`分片 ${partNumber} 大小 ${fileBuffer.length} 字节，小于最小要求 5MB`);
+    }
 
     const authResponse = await fetch(authUrl, {
       headers: {
@@ -56,13 +60,14 @@ exports.handler = async (event, context) => {
         method: "POST",
         headers: {
           Authorization: uploadAuthToken,
-          "Content-Type": mimeType || "application/octet-stream",
+          "Content-Type": "application/octet-stream",
           "X-Bz-File-Name": encodeURIComponent(fileName),
           "X-Bz-Content-Sha1": "do_not_verify",
         },
         body: fileBuffer,
       });
-      if (!uploadResponse.ok) throw new Error(`上传失败: ${await uploadResponse.text()}`);
+      const uploadText = await uploadResponse.text();
+      if (!uploadResponse.ok) throw new Error(`上传失败: ${uploadText}`);
 
       console.log("小文件上传成功:", fileName);
       return {
@@ -83,7 +88,7 @@ exports.handler = async (event, context) => {
         body: JSON.stringify({
           bucketId: "5f4a78ff70c84f6f94510519",
           fileName: encodeURIComponent(fileName),
-          contentType: mimeType || "application/octet-stream",
+          contentType: "application/octet-stream",
         }),
       });
       const startLargeFileData = await startLargeFileResponse.json();
@@ -96,7 +101,6 @@ exports.handler = async (event, context) => {
       throw new Error("无效的 fileId");
     }
 
-    // 直接上传当前分片，不等待合并
     const uploadPartUrlResponse = await fetch(`${apiUrl}/b2api/v2/b2_get_upload_part_url`, {
       method: "POST",
       headers: { Authorization: authorizationToken, "Content-Type": "application/json" },
@@ -107,7 +111,7 @@ exports.handler = async (event, context) => {
     const { uploadUrl, authorizationToken: partAuthToken } = uploadPartUrlData;
 
     const sha1 = crypto.createHash("sha1").update(fileBuffer).digest("hex");
-    const actualPartNumber = partNumber; // 使用前端传递的分片号
+    const actualPartNumber = partNumber;
     console.log(`上传分片 ${actualPartNumber} 到 B2，大小: ${fileBuffer.length} 字节`);
     const uploadPartResponse = await fetch(uploadUrl, {
       method: "POST",
@@ -120,11 +124,11 @@ exports.handler = async (event, context) => {
       },
       body: fileBuffer,
     });
-    if (!uploadPartResponse.ok) throw new Error(`分片上传失败: ${await uploadPartResponse.text()}`);
+    const uploadPartText = await uploadPartResponse.text();
+    if (!uploadPartResponse.ok) throw new Error(`分片上传失败: ${uploadPartText}`);
     console.log(`分片 ${actualPartNumber} 上传成功`);
 
     if (partNumber === totalParts) {
-      // 获取所有已上传分片的 SHA1
       const listPartsResponse = await fetch(`${apiUrl}/b2api/v2/b2_list_parts`, {
         method: "POST",
         headers: { Authorization: authorizationToken, "Content-Type": "application/json" },
@@ -168,7 +172,7 @@ exports.handler = async (event, context) => {
       }),
     };
   } catch (error) {
-    console.error("处理失败:", error.message);
+    console.error("处理失败:", error.message, error.stack);
     return {
       statusCode: 500,
       body: JSON.stringify({ message: "Error uploading file", error: error.message }),
