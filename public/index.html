@@ -113,4 +113,48 @@
         return;
       }
 
-      let
+      let fileId = null;
+      const fileName = file.name + ".enc";
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+
+        const { encryptedBlob, keyBase64 } = await encryptChunk(chunk);
+        if (i === 0) fileKey = keyBase64;
+        const reader = new FileReader();
+        reader.readAsDataURL(encryptedBlob);
+        await new Promise((resolve) => (reader.onload = resolve));
+
+        const base64Data = reader.result.split(",")[1];
+        const requestBody = {
+          file: base64Data,
+          fileName: fileName,
+          mimeType: "application/octet-stream",
+          partNumber: i + 1,
+          totalParts: totalChunks,
+          fileId: fileId || undefined,
+        };
+
+        try {
+          console.log(`发送分片 ${i + 1}/${totalChunks}...`);
+          const data = await uploadChunk(requestBody);
+          if (i === 0) fileId = data.fileId;
+          document.getElementById("result").textContent = `分片 ${i + 1}/${totalChunks} 上传成功`;
+          console.log(`分片 ${i + 1} 成功:`, data);
+        } catch (error) {
+          document.getElementById("result").textContent = `分片 ${i + 1} 上传失败: ${error.message}`;
+          console.error(`分片 ${i + 1} 错误:`, error.message);
+          isUploading = false;
+          uploadButton.disabled = false;
+          return;
+        }
+      }
+      document.getElementById("result").textContent = `文件上传完成: ${fileName}`;
+      document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
+      isUploading = false;
+      uploadButton.disabled = false;
+    }
+  </script>
+</body>
+</html>
