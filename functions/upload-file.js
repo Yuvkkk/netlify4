@@ -8,6 +8,7 @@ const MIN_PART_SIZE = 5 * 1000 * 1000; // 5MB
 
 let tempBuffers = {};
 let fileIds = {};
+let partCounters = {};
 
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
@@ -96,6 +97,7 @@ exports.handler = async (event, context) => {
       if (!startLargeFileResponse.ok) throw new Error(`启动大文件失败: ${JSON.stringify(startLargeFileData)}`);
       fileId = startLargeFileData.fileId;
       fileIds[fileName] = fileId;
+      partCounters[fileName] = 0;
       console.log("启动大文件上传成功:", fileId);
     }
 
@@ -109,8 +111,8 @@ exports.handler = async (event, context) => {
     const currentSize = tempBuffers[fileName].reduce((sum, buf) => sum + buf.length, 0);
     console.log(`暂存分片 ${partNumber}, 当前累计大小: ${currentSize} 字节`);
 
-    // 每累计 2 片或到达最后一片时上传
-    if (tempBuffers[fileName].length >= 2 || partNumber === totalParts) {
+    // 当累计大小超过 5MB 或到达最后一片时上传
+    if (currentSize >= MIN_PART_SIZE || partNumber === totalParts) {
       const mergedBuffer = Buffer.concat(tempBuffers[fileName]);
       console.log(`合并分片，准备上传到 B2，大小: ${mergedBuffer.length} 字节`);
 
@@ -123,7 +125,8 @@ exports.handler = async (event, context) => {
       if (!uploadPartUrlResponse.ok) throw new Error(`获取分片 URL 失败: ${JSON.stringify(uploadPartUrlData)}`);
       const { uploadUrl, authorizationToken: partAuthToken } = uploadPartUrlData;
 
-      const partIndex = Math.ceil(partNumber / 2);
+      partCounters[fileName] = (partCounters[fileName] || 0) + 1;
+      const partIndex = partCounters[fileName];
       const sha1 = crypto.createHash("sha1").update(mergedBuffer).digest("hex");
       console.log(`上传分片 ${partIndex} 到 B2，大小: ${mergedBuffer.length} 字节`);
       const uploadPartResponse = await fetch(uploadUrl, {
@@ -173,6 +176,7 @@ exports.handler = async (event, context) => {
 
         delete tempBuffers[fileName];
         delete fileIds[fileName];
+        delete partCounters[fileName];
 
         return {
           statusCode: 200,
