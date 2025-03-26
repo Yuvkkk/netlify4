@@ -16,12 +16,15 @@
     const API_TOKEN = "my-secret-token-123";
     let isUploading = false;
 
-    async function encryptChunk(chunk) {
-      const key = await crypto.subtle.generateKey(
+    async function generateKey() {
+      return await crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 },
         true,
         ["encrypt", "decrypt"]
       );
+    }
+
+    async function encryptChunk(chunk, key) {
       const iv = crypto.getRandomValues(new Uint8Array(12));
       const buffer = await chunk.arrayBuffer();
       const encrypted = await crypto.subtle.encrypt(
@@ -29,11 +32,9 @@
         key,
         buffer
       );
-      const exportedKey = await crypto.subtle.exportKey("raw", key);
-      const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
       const encryptedBlob = new Blob([iv, encrypted]);
       console.log(`分片原始大小: ${buffer.byteLength} 字节, 加密后大小: ${encryptedBlob.size} 字节`);
-      return { encryptedBlob, keyBase64 };
+      return encryptedBlob;
     }
 
     async function uploadChunk(requestBody, retryCount = 0) {
@@ -81,11 +82,12 @@
       console.log(`总分片数: ${totalChunks}`);
       document.getElementById("result").textContent = "开始上传...";
 
-      let fileKey = null;
+      const key = await generateKey();
+      const exportedKey = await crypto.subtle.exportKey("raw", key);
+      const keyBase64 = btoa(String.fromCharCode(...new Uint8Array(exportedKey)));
 
       if (totalChunks === 1) {
-        const { encryptedBlob, keyBase64 } = await encryptChunk(file);
-        fileKey = keyBase64;
+        const encryptedBlob = await encryptChunk(file, key);
         const reader = new FileReader();
         reader.readAsDataURL(encryptedBlob);
         await new Promise((resolve) => (reader.onload = resolve));
@@ -102,7 +104,7 @@
           console.log("发送小文件请求...");
           const data = await uploadChunk(requestBody);
           document.getElementById("result").textContent = `文件上传成功: ${data.fileUrl}`;
-          document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
+          document.getElementById("keyOutput").value = `密钥: ${keyBase64}\n请保存此密钥用于解密！`;
           console.log("小文件上传成功:", data);
         } catch (error) {
           document.getElementById("result").textContent = `上传失败: ${error.message}`;
@@ -120,8 +122,7 @@
         const end = Math.min(start + CHUNK_SIZE, file.size);
         const chunk = file.slice(start, end);
 
-        const { encryptedBlob, keyBase64 } = await encryptChunk(chunk);
-        if (i === 0) fileKey = keyBase64;
+        const encryptedBlob = await encryptChunk(chunk, key);
         const reader = new FileReader();
         reader.readAsDataURL(encryptedBlob);
         await new Promise((resolve) => (reader.onload = resolve));
@@ -151,7 +152,7 @@
         }
       }
       document.getElementById("result").textContent = `文件上传完成: ${fileName}`;
-      document.getElementById("keyOutput").value = `密钥: ${fileKey}\n请保存此密钥用于解密！`;
+      document.getElementById("keyOutput").value = `密钥: ${keyBase64}\n请保存此密钥用于解密！`;
       isUploading = false;
       uploadButton.disabled = false;
     }
